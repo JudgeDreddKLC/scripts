@@ -82,7 +82,10 @@ Remove all ghost devices without confirmation
 . "removeGhosts.ps1" -Force
 
 .NOTES
-Permission level has not been tested.  It is assumed you will need to have sufficient rights to uninstall devices from device manager for this script to run properly.
+	- Permission level has not been tested.  It is assumed you will need to have sufficient rights to uninstall devices from device manager for this script to run properly.
+	- The `ForceDelete` parameter adds an additional safety layer by requiring user confirmation for each device before removal.
+	- Use `ForceDelete` cautiously; it enforces the use of filters to prevent accidental mass deletion.
+	- The script assumes the user has sufficient permissions to uninstall devices from Device Manager.
 #>
 
 Param(
@@ -92,7 +95,8 @@ Param(
   [array]$NarrowByFriendlyName,
   [switch]$listDevicesOnly,
   [switch]$listGhostDevicesOnly,
-  [switch]$Force
+  [switch]$Force,
+  [switch]$ForceDelete
 )
 
 #parameter futzing
@@ -126,10 +130,16 @@ if ($listGhostDevicesOnly -eq $true) {
 if ($Force -eq $true) {
     write-host "Each removal will happen without any confirmation: $Force"
 }
+# Validate ForceDelete parameter
+if ($ForceDelete -and (-not $FilterByClass -and -not $NarrowByClass -and -not $FilterByFriendlyName -and -not $NarrowByFriendlyName)) {
+    Write-Host "Error: At least one filter must be specified when using -ForceDelete." -ForegroundColor Red
+    return
+}
 
 function Filter-Device {
     Param (
-        [System.Object]$dev
+        [System.Object]$dev,
+        [switch]$ForceDelete
     )
     $Class = $dev.Class
     $FriendlyName = $dev.FriendlyName
@@ -173,22 +183,37 @@ function Filter-Device {
         }
         $matchFilter = !$shouldInclude
     }
+
+    # Prompt user confirmation if ForceDelete is specified
+    if ($ForceDelete -and ($matchFilter -eq $false)) {
+        $question = "Do you want to remove the device '$FriendlyName'? (Yes/No)"
+        $confirmation = Read-Host $question
+        if ($confirmation -match '^y(es)?$') {
+            $matchFilter = $false # Proceed with removal
+        } else {
+            Write-Host "Skipped device '$FriendlyName'." -ForegroundColor Yellow
+            $matchFilter = $true # Skip the device
+        }
+    }
+
     return $matchFilter
 }
 
 function Filter-Devices {
     Param (
-        [array]$devices
+        [array]$devices,
+        [switch]$ForceDelete
     )
     $filteredDevices = @()
     foreach ($dev in $devices) {
-        $matchFilter = Filter-Device -Dev $dev
+        $matchFilter = Filter-Device -Dev $dev -ForceDelete:$ForceDelete
         if ($matchFilter -eq $false) {
             $filteredDevices += @($dev)
         }
     }
     return $filteredDevices
 }
+
 function Get-Ghost-Devices {
     Param (
         [array]$devices
